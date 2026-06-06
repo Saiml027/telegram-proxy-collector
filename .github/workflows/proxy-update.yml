@@ -34,32 +34,45 @@ jobs:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        echo "=== DEBUG START ==="
-        echo "TG_BOT length: ${#TG_BOT}"
-        echo "TG_CHAT: $TG_CHAT"
-        echo "Current directory: $(pwd)"
-        echo "Files in current dir:"
-        ls -la
-        echo "--- proxy_ru.txt content (first 10 lines): ---"
-        head -n 10 proxy_ru.txt 2>&1 || echo "File not found or empty"
-        echo "--- grep for proxy links: ---"
-        grep -E '^https?://t\.me/proxy\?' proxy_ru.txt | head -n 5 || echo "No matches found"
-        echo "=== DEBUG END ==="
+        # Проверяем все три файла
+        RU_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_ru.txt 2>/dev/null | head -n 3)
+        EU_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_eu.txt 2>/dev/null | head -n 3)
+        ALL_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_all.txt 2>/dev/null | head -n 3)
         
-        if [ -f proxy_ru.txt ]; then
-          echo "proxy_ru.txt exists"
-          PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_ru.txt | head -n 3)
-          if [ -n "$PROXIES" ]; then
-            echo "Found proxies: $PROXIES"
-            MESSAGE="Новые прокси для РФ%0A%0A$PROXIES"
-            echo "Sending to Telegram..."
-            curl -v -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-              -d chat_id="${TG_CHAT}" \
-              -d text="${MESSAGE}"
-            echo "Curl exit code: $?"
-          else
-            echo "PROXIES is empty"
-          fi
-        else
-          echo "proxy_ru.txt does NOT exist"
+        # Получаем дату обновления из любого файла
+        UPDATE_DATE=$(head -n 2 proxy_ru.txt | grep "Updated:" | sed 's/# Updated: //' | cut -d'.' -f1 | tr ' ' '_' || date)
+        
+        # Формируем сообщение
+        MESSAGE="📡 *Свежие прокси MTProto*%0A"
+        MESSAGE="${MESSAGE}Обновлено: ${UPDATE_DATE} UTC%0A%0A"
+        
+        SENT=0
+        
+        if [ -n "$RU_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🇷🇺 *РФ (маскировка Яндекс/ВК)*%0A"
+          MESSAGE="${MESSAGE}${RU_PROXIES}%0A%0A"
+          SENT=1
         fi
+        
+        if [ -n "$EU_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🇪🇺 *EU (маскировка Google/Amazon)*%0A"
+          MESSAGE="${MESSAGE}${EU_PROXIES}%0A%0A"
+          SENT=1
+        fi
+        
+        if [ -n "$ALL_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🌍 *Все прокси*%0A"
+          MESSAGE="${MESSAGE}${ALL_PROXIES}%0A%0A"
+          SENT=1
+        fi
+        
+        if [ $SENT -eq 0 ]; then
+          MESSAGE="${MESSAGE}⚠️ *Не найдено ни одного рабочего прокси*%0A"
+          MESSAGE="${MESSAGE}Следующая попытка через 4 часа."
+        fi
+        
+        # Отправляем
+        curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          -d chat_id="${TG_CHAT}" \
+          -d text="${MESSAGE}" \
+          -d parse_mode="Markdown"
