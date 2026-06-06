@@ -13,44 +13,58 @@ jobs:
     
     - name: Download verified proxies
       run: |
-        echo "=== Скачиваем proxy_ru.txt ==="
-        curl -v -o proxy_ru.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt
-        echo "=== Первые 20 строк proxy_ru.txt ==="
-        head -n 20 proxy_ru.txt
-        echo "=== Ищем ссылки на прокси в proxy_ru.txt ==="
-        grep -c 't.me/proxy' proxy_ru.txt || echo "0 найдено"
+        echo "=== Скачиваем файлы ==="
+        curl -s -o proxy_ru.txt "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt"
+        curl -s -o proxy_eu.txt "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt"
+        curl -s -o proxy_all.txt "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt"
         
-        echo "=== Скачиваем proxy_eu.txt ==="
-        curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
-        echo "=== Первые 5 строк proxy_eu.txt ==="
-        head -n 5 proxy_eu.txt
+        echo "=== Размеры файлов ==="
+        ls -la proxy_*.txt
         
-        echo "=== Скачиваем proxy_all.txt ==="
-        curl -s -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt
-        echo "=== Первые 5 строк proxy_all.txt ==="
-        head -n 5 proxy_all.txt
-      
+        echo "=== Содержимое proxy_ru.txt (весь файл) ==="
+        cat proxy_ru.txt
+        
+        echo "=== Содержимое proxy_eu.txt (весь файл) ==="
+        cat proxy_eu.txt
+        
+        echo "=== Содержимое proxy_all.txt (весь файл) ==="
+        cat proxy_all.txt
+        
+        echo "=== Поиск ссылок с t.me/proxy ==="
+        grep 't.me/proxy' proxy_ru.txt | head -n 5 || echo "В proxy_ru.txt ссылок нет"
+        grep 't.me/proxy' proxy_eu.txt | head -n 5 || echo "В proxy_eu.txt ссылок нет"
+        grep 't.me/proxy' proxy_all.txt | head -n 5 || echo "В proxy_all.txt ссылок нет"
+    
     - name: Send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        RU_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_ru.txt 2>/dev/null | head -n 5)
-        EU_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_eu.txt 2>/dev/null | head -n 5)
-        ALL_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_all.txt 2>/dev/null | head -n 5)
+        RU_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_ru.txt 2>/dev/null | head -n 5)
+        EU_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_eu.txt 2>/dev/null | head -n 5)
+        ALL_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_all.txt 2>/dev/null | head -n 5)
         
-        MESSAGE="📡 Свежие прокси MTProto\n\n"
+        echo "=== Найденные прокси ==="
+        echo "RU: $RU_PROXIES"
+        echo "EU: $EU_PROXIES"
+        echo "ALL: $ALL_PROXIES"
+        
+        MESSAGE="📡 Свежие прокси MTProto%0A%0A"
         
         if [ -n "$RU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇷🇺 РФ (маскировка Яндекс/ВК)\n${RU_PROXIES}\n\n"
+          MESSAGE="${MESSAGE}🇷🇺 РФ%0A${RU_PROXIES}%0A%0A"
         fi
         
         if [ -n "$EU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇪🇺 EU (маскировка Google/Amazon)\n${EU_PROXIES}\n\n"
+          MESSAGE="${MESSAGE}🇪🇺 EU%0A${EU_PROXIES}%0A%0A"
         fi
         
         if [ -n "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🌍 Все прокси\n${ALL_PROXIES}\n\n"
+          MESSAGE="${MESSAGE}🌍 Все%0A${ALL_PROXIES}%0A%0A"
+        fi
+        
+        if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
+          MESSAGE="${MESSAGE}⚠️ Прокси не найдены. Возможно, изменился формат файлов в источнике."
         fi
         
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
