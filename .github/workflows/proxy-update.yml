@@ -39,40 +39,39 @@ jobs:
         EU_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_eu.txt 2>/dev/null | head -n 3)
         ALL_PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_all.txt 2>/dev/null | head -n 3)
         
-        # Получаем дату обновления из любого файла
-        UPDATE_DATE=$(head -n 2 proxy_ru.txt | grep "Updated:" | sed 's/# Updated: //' | cut -d'.' -f1 | tr ' ' '_' || date)
+        # Получаем дату обновления
+        UPDATE_DATE=$(head -n 2 proxy_ru.txt | grep "Updated:" | sed 's/# Updated: //' | cut -d'.' -f1 || date)
         
-        # Формируем сообщение
-        MESSAGE="📡 *Свежие прокси MTProto*%0A"
-        MESSAGE="${MESSAGE}Обновлено: ${UPDATE_DATE} UTC%0A%0A"
+        # Формируем сообщение (без Markdown)
+        MESSAGE="📡 Свежие прокси MTProto\n"
+        MESSAGE="${MESSAGE}Обновлено: ${UPDATE_DATE} UTC\n\n"
         
         SENT=0
         
         if [ -n "$RU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇷🇺 *РФ (маскировка Яндекс/ВК)*%0A"
-          MESSAGE="${MESSAGE}${RU_PROXIES}%0A%0A"
+          MESSAGE="${MESSAGE}🇷🇺 РФ (маскировка Яндекс/ВК)\n"
+          MESSAGE="${MESSAGE}${RU_PROXIES}\n\n"
           SENT=1
         fi
         
         if [ -n "$EU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇪🇺 *EU (маскировка Google/Amazon)*%0A"
-          MESSAGE="${MESSAGE}${EU_PROXIES}%0A%0A"
+          MESSAGE="${MESSAGE}🇪🇺 EU (маскировка Google/Amazon)\n"
+          MESSAGE="${MESSAGE}${EU_PROXIES}\n\n"
           SENT=1
         fi
         
         if [ -n "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🌍 *Все прокси*%0A"
-          MESSAGE="${MESSAGE}${ALL_PROXIES}%0A%0A"
+          MESSAGE="${MESSAGE}🌍 Все прокси\n"
+          MESSAGE="${MESSAGE}${ALL_PROXIES}\n\n"
           SENT=1
         fi
         
         if [ $SENT -eq 0 ]; then
-          MESSAGE="${MESSAGE}⚠️ *Не найдено ни одного рабочего прокси*%0A"
+          MESSAGE="${MESSAGE}⚠️ Не найдено ни одного рабочего прокси\n"
           MESSAGE="${MESSAGE}Следующая попытка через 4 часа."
         fi
         
-        # Отправляем
+        # Отправляем (без parse_mode)
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="${MESSAGE}" \
-          -d parse_mode="Markdown"
+          -d text="${MESSAGE}"
