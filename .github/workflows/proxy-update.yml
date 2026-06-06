@@ -40,9 +40,10 @@ jobs:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        RU_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_ru.txt 2>/dev/null | head -n 5)
-        EU_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_eu.txt 2>/dev/null | head -n 5)
-        ALL_PROXIES=$(grep -E 'https?://t\.me/proxy' proxy_all.txt 2>/dev/null | head -n 5)
+        # Ищем ссылки в формате tg://proxy (ищем и tg:// и https://t.me/proxy)
+        RU_PROXIES=$(grep -E 'tg://proxy|https?://t\.me/proxy' proxy_ru.txt 2>/dev/null | head -n 5)
+        EU_PROXIES=$(grep -E 'tg://proxy|https?://t\.me/proxy' proxy_eu.txt 2>/dev/null | head -n 5)
+        ALL_PROXIES=$(grep -E 'tg://proxy|https?://t\.me/proxy' proxy_all.txt 2>/dev/null | head -n 5)
         
         echo "=== Найденные прокси ==="
         echo "RU: $RU_PROXIES"
@@ -64,7 +65,7 @@ jobs:
         fi
         
         if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}⚠️ Прокси не найдены. Возможно, изменился формат файлов в источнике."
+          MESSAGE="${MESSAGE}⚠️ Прокси не найдены"
         fi
         
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
