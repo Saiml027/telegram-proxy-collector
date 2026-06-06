@@ -13,9 +13,22 @@ jobs:
     
     - name: Download verified proxies
       run: |
-        curl -o proxy_ru.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt
-        curl -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
-        curl -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt
+        echo "=== Скачиваем proxy_ru.txt ==="
+        curl -v -o proxy_ru.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt
+        echo "=== Первые 20 строк proxy_ru.txt ==="
+        head -n 20 proxy_ru.txt
+        echo "=== Ищем ссылки на прокси в proxy_ru.txt ==="
+        grep -c 't.me/proxy' proxy_ru.txt || echo "0 найдено"
+        
+        echo "=== Скачиваем proxy_eu.txt ==="
+        curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
+        echo "=== Первые 5 строк proxy_eu.txt ==="
+        head -n 5 proxy_eu.txt
+        
+        echo "=== Скачиваем proxy_all.txt ==="
+        curl -s -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt
+        echo "=== Первые 5 строк proxy_all.txt ==="
+        head -n 5 proxy_all.txt
       
     - name: Send to Telegram
       env:
