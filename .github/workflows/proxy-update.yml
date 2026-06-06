@@ -34,10 +34,32 @@ jobs:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
+        echo "=== DEBUG START ==="
+        echo "TG_BOT length: ${#TG_BOT}"
+        echo "TG_CHAT: $TG_CHAT"
+        echo "Current directory: $(pwd)"
+        echo "Files in current dir:"
+        ls -la
+        echo "--- proxy_ru.txt content (first 10 lines): ---"
+        head -n 10 proxy_ru.txt 2>&1 || echo "File not found or empty"
+        echo "--- grep for proxy links: ---"
+        grep -E '^https?://t\.me/proxy\?' proxy_ru.txt | head -n 5 || echo "No matches found"
+        echo "=== DEBUG END ==="
+        
         if [ -f proxy_ru.txt ]; then
+          echo "proxy_ru.txt exists"
           PROXIES=$(grep -E '^https?://t\.me/proxy\?' proxy_ru.txt | head -n 3)
           if [ -n "$PROXIES" ]; then
+            echo "Found proxies: $PROXIES"
             MESSAGE="Новые прокси для РФ%0A%0A$PROXIES"
-            curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" -d chat_id="${TG_CHAT}" -d text="${MESSAGE}"
+            echo "Sending to Telegram..."
+            curl -v -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+              -d chat_id="${TG_CHAT}" \
+              -d text="${MESSAGE}"
+            echo "Curl exit code: $?"
+          else
+            echo "PROXIES is empty"
           fi
+        else
+          echo "proxy_ru.txt does NOT exist"
         fi
