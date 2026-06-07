@@ -17,6 +17,23 @@ jobs:
         curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
         curl -s -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt
     
+    - name: Debug - Check file content
+      run: |
+        echo "=== ПРОВЕРКА proxy_ru.txt ==="
+        head -n 20 proxy_ru.txt
+        echo ""
+        echo "=== ПОИСК tg://proxy в proxy_ru.txt ==="
+        grep 'tg://' proxy_ru.txt | head -n 5
+        echo ""
+        echo "=== ПОИСК https://t.me/proxy в proxy_ru.txt ==="
+        grep 'https://t.me/proxy' proxy_ru.txt | head -n 5
+        echo ""
+        echo "=== ПРОВЕРКА proxy_eu.txt ==="
+        head -n 20 proxy_eu.txt
+        echo ""
+        echo "=== ПОИСК tg://proxy в proxy_eu.txt ==="
+        grep 'tg://' proxy_eu.txt | head -n 5
+    
     - name: Send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
@@ -26,48 +43,63 @@ jobs:
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём прокси (каждую ссылку отдельно)
-        RU_PROXIES=$(grep 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5)
-        EU_PROXIES=$(grep 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5)
-        ALL_PROXIES=$(grep 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5)
+        # Пробуем оба формата ссылок
+        RU_PROXIES=$(grep -E 'tg://proxy|https://t.me/proxy' proxy_ru.txt 2>/dev/null | head -n 5)
+        EU_PROXIES=$(grep -E 'tg://proxy|https://t.me/proxy' proxy_eu.txt 2>/dev/null | head -n 5)
+        ALL_PROXIES=$(grep -E 'tg://proxy|https://t.me/proxy' proxy_all.txt 2>/dev/null | head -n 5)
         
-        # Формируем текст
-        TEXT="⚡️ *Актуальные прокси MTProto*\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\nПросьба подключаться с учётом загрузки серверов.\n\n"
+        # Если прокси не найдены - используем запасной источник
+        if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
+          echo "Прокси не найдены в основном источнике, пробуем запасной..."
+          curl -s -o proxy_backup.txt "https://raw.githubusercontent.com/tejastank/Telegram-MTProto-Proxy-Collector/main/ProxyLists/Proxy_all.txt"
+          ALL_PROXIES=$(grep -E 'https://t.me/proxy' proxy_backup.txt 2>/dev/null | head -n 10)
+        fi
+        
+        # Формируем сообщение
+        TEXT="⚡️ <b>Актуальные прокси MTProto</b>\n"
+        TEXT="${TEXT}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n"
+        TEXT="${TEXT}Просьба подключаться с учётом загрузки серверов.\n\n"
         
         if [ -n "$RU_PROXIES" ]; then
-          TEXT="${TEXT}🇷🇺 *Россия*\n"
+          TEXT="${TEXT}🇷🇺 <b>Россия</b>\n"
           COUNTER=1
           while IFS= read -r line; do
-            TEXT="${TEXT}🟢 Прокси ${COUNTER}: ${line}\n"
+            TEXT="${TEXT}🟢 Прокси ${COUNTER}: <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$RU_PROXIES"
           TEXT="${TEXT}\n"
         fi
         
         if [ -n "$EU_PROXIES" ]; then
-          TEXT="${TEXT}🇪🇺 *Европа*\n"
+          TEXT="${TEXT}🇪🇺 <b>Европа</b>\n"
           COUNTER=1
           while IFS= read -r line; do
-            TEXT="${TEXT}🟢 Прокси ${COUNTER}: ${line}\n"
+            TEXT="${TEXT}🟢 Прокси ${COUNTER}: <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$EU_PROXIES"
           TEXT="${TEXT}\n"
         fi
         
         if [ -n "$ALL_PROXIES" ]; then
-          TEXT="${TEXT}🌍 *Все прокси*\n"
+          TEXT="${TEXT}🌍 <b>Все прокси</b>\n"
           COUNTER=1
           while IFS= read -r line; do
-            TEXT="${TEXT}🟢 Прокси ${COUNTER}: ${line}\n"
+            TEXT="${TEXT}🟢 Прокси ${COUNTER}: <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$ALL_PROXIES"
+        fi
+        
+        # Если нет прокси
+        if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
+          TEXT="${TEXT}⚠️ Прокси временно отсутствуют\n"
+          TEXT="${TEXT}Следующее обновление через 4 часа"
         fi
         
         # Отправляем
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
           -d text="${TEXT}" \
-          -d parse_mode="Markdown" \
+          -d parse_mode="HTML" \
           --max-time 30
         
-        echo "Готово!"
+        echo "Сообщение отправлено!"
