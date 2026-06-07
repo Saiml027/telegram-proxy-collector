@@ -26,57 +26,68 @@ jobs:
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём прокси
+        # Берём прокси (полные ссылки)
         RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5)
         EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5)
         ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5)
         
-        # Функция отправки с кнопками
-        send_with_buttons() {
-          local proxies="$1"
-          local title="$2"
-          local flag="$3"
-          
-          if [ -z "$proxies" ]; then
-            return
-          fi
-          
-          # Формируем клавиатуру
-          local keyboard='{"inline_keyboard":['
-          local counter=1
-          
-          while IFS= read -r proxy_url; do
-            # Экранируем для JSON
-            proxy_url=$(echo "$proxy_url" | sed 's/&/\\&/g' | sed 's/"/\\"/g')
-            
-            # Случайный процент
+        # Начинаем сообщение
+        MESSAGE="⚡️ *Актуальные прокси MTProto*%0A"
+        MESSAGE="${MESSAGE}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК%0A"
+        MESSAGE="${MESSAGE}Просьба подключаться с учётом загрузки серверов.%0A%0A"
+        
+        # Добавляем РФ
+        if [ -n "$RU_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🇷🇺 *Россия*%0A"
+          COUNTER=1
+          while IFS= read -r line; do
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            
-            keyboard="${keyboard}[{\"text\":\"${EMOJI} ${PERCENT}% 👉 ${title} ${counter}\",\"url\":\"${proxy_url}\"}],"
-            counter=$((counter + 1))
-          done <<< "$proxies"
-          
-          # Убираем последнюю запятую и закрываем JSON
-          keyboard="${keyboard%,}]}"
-          
-          # Текст сообщения
-          local message="${flag} *${title}*%0A"
-          message="${message}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК%0A"
-          message="${message}Просьба подключаться с учётом загрузки серверов.%0A%0A"
-          
-          # Отправляем
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-            -d chat_id="${TG_CHAT}" \
-            -d text="${message}" \
-            -d parse_mode="Markdown" \
-            -d reply_markup="${keyboard}"
-          
-          sleep 1
-        }
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            COUNTER=$((COUNTER + 1))
+          done <<< "$RU_PROXIES"
+          MESSAGE="${MESSAGE}%0A"
+        fi
         
-        # Отправляем каждую категорию
-        send_with_buttons "$RU_PROXIES" "Россия" "🇷🇺"
-        send_with_buttons "$EU_PROXIES" "Европа" "🇪🇺"
-        send_with_buttons "$ALL_PROXIES" "Все прокси" "🌍"
+        # Добавляем EU
+        if [ -n "$EU_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🇪🇺 *Европа*%0A"
+          COUNTER=1
+          while IFS= read -r line; do
+            PERCENT=$((RANDOM % 100))
+            if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
+            if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            COUNTER=$((COUNTER + 1))
+          done <<< "$EU_PROXIES"
+          MESSAGE="${MESSAGE}%0A"
+        fi
+        
+        # Добавляем ALL
+        if [ -n "$ALL_PROXIES" ]; then
+          MESSAGE="${MESSAGE}🌍 *Все прокси*%0A"
+          COUNTER=1
+          while IFS= read -r line; do
+            PERCENT=$((RANDOM % 100))
+            if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
+            if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            COUNTER=$((COUNTER + 1))
+          done <<< "$ALL_PROXIES"
+        fi
+        
+        # Если нет прокси
+        if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
+          MESSAGE="${MESSAGE}⚠️ Прокси временно отсутствуют%0A"
+          MESSAGE="${MESSAGE}Следующее обновление через 4 часа"
+        fi
+        
+        # Отправляем
+        curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          -d chat_id="${TG_CHAT}" \
+          -d text="${MESSAGE}" \
+          -d parse_mode="Markdown" \
+          --max-time 30
+        
+        echo "Сообщение отправлено!"
