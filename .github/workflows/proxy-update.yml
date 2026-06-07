@@ -16,67 +16,82 @@ jobs:
         curl -s -o proxy_ru.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt
         curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
         curl -s -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_all.txt
+        
+        echo "=== РАЗМЕРЫ ФАЙЛОВ ==="
+        ls -la proxy_*.txt
+        
+        echo "=== ПЕРВЫЕ 3 СТРОКИ proxy_eu.txt ==="
+        head -n 3 proxy_eu.txt
+        
+        echo "=== ПОИСК tg://proxy в proxy_eu.txt ==="
+        grep 'tg://proxy' proxy_eu.txt | head -n 3
     
     - name: Send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Получаем время по МСК
-        MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
-        MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
+        # Проверяем переменные
+        echo "=== ПРОВЕРКА СЕКРЕТОВ ==="
+        echo "TG_BOT длина: ${#TG_BOT}"
+        echo "TG_CHAT: $TG_CHAT"
         
-        # Берём прокси (БЕЗ экранирования — пусть будут как есть)
-        RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5)
-        EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5)
-        ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5)
+        # Проверяем, что есть прокси
+        RU_PROXIES=$(grep 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 3)
+        EU_PROXIES=$(grep 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 3)
+        ALL_PROXIES=$(grep 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 3)
         
-        # Формируем сообщение в формате, который Telegram покажет как кнопки
+        echo "=== НАЙДЕННЫЕ ПРОКСИ ==="
+        echo "RU: $RU_PROXIES"
+        echo "EU: $EU_PROXIES"
+        echo "ALL: $ALL_PROXIES"
+        
+        # Проверяем, можем ли отправить простое сообщение
+        echo "=== ОТПРАВКА ТЕСТОВОГО СООБЩЕНИЯ ==="
+        curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          -d chat_id="${TG_CHAT}" \
+          -d text="🔧 Тест: бот работает, время $(date)" \
+          --max-time 10
+        
+        echo ""
+        echo "=== ОТПРАВКА С КНОПКАМИ ==="
+        
+        # Функция отправки
         send_category() {
           local proxies="$1"
           local title="$2"
           local flag="$3"
           
           if [ -z "$proxies" ]; then
+            echo "Нет прокси для $title"
             return
           fi
           
-          # Текст сообщения
-          local message="${flag} <b>${title}</b>\n"
-          message="${message}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n"
-          message="${message}Просьба подключаться с учётом загрузки серверов.\n\n"
-          
-          # Формируем inline кнопки
           local keyboard='{"inline_keyboard":['
           local counter=1
           
           while IFS= read -r proxy_url; do
-            # Случайный процент
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
             
-            # Экранируем для JSON (только кавычки, НЕ экранируем & и =)
-            proxy_url_json=$(echo "$proxy_url" | sed 's/"/\\"/g')
-            
-            keyboard="${keyboard}[{\"text\":\"${EMOJI} ${PERCENT}% 👉 ${title} ${counter}\",\"url\":\"${proxy_url_json}\"}],"
+            keyboard="${keyboard}[{\"text\":\"${EMOJI} ${PERCENT}% 👉 ${title} ${counter}\",\"url\":\"${proxy_url}\"}],"
             counter=$((counter + 1))
           done <<< "$proxies"
           
-          # Убираем последнюю запятую и закрываем JSON
           keyboard="${keyboard%,}]}"
           
-          # Отправляем
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          echo "Отправляем $title, JSON: $keyboard"
+          
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="${message}" \
-            -d parse_mode="HTML" \
+            -d text="${flag} ${title}" \
             -d reply_markup="${keyboard}"
           
+          echo ""
           sleep 1
         }
         
-        # Отправляем каждую категорию
         send_category "$RU_PROXIES" "Россия" "🇷🇺"
         send_category "$EU_PROXIES" "Европа" "🇪🇺"
         send_category "$ALL_PROXIES" "Все прокси" "🌍"
