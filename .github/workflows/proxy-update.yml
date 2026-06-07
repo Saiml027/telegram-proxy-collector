@@ -26,66 +26,57 @@ jobs:
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём прокси (правильно извлекаем полные ссылки и экранируем спецсимволы)
-        RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
-        EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
-        ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
+        # Берём прокси (БЕЗ экранирования — пусть будут как есть)
+        RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5)
+        EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5)
+        ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5)
         
-        # Начинаем сообщение
-        MESSAGE="⚡️ <b>Актуальные прокси MTProto</b>\n"
-        MESSAGE="${MESSAGE}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n"
-        MESSAGE="${MESSAGE}Просьба подключаться с учётом загрузки серверов.\n\n"
-        
-        # Добавляем РФ
-        if [ -n "$RU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇷🇺 <b>Россия</b>\n"
-          COUNTER=1
-          while IFS= read -r line; do
+        # Формируем сообщение в формате, который Telegram покажет как кнопки
+        send_category() {
+          local proxies="$1"
+          local title="$2"
+          local flag="$3"
+          
+          if [ -z "$proxies" ]; then
+            return
+          fi
+          
+          # Текст сообщения
+          local message="${flag} <b>${title}</b>\n"
+          message="${message}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n"
+          message="${message}Просьба подключаться с учётом загрузки серверов.\n\n"
+          
+          # Формируем inline кнопки
+          local keyboard='{"inline_keyboard":['
+          local counter=1
+          
+          while IFS= read -r proxy_url; do
+            # Случайный процент
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
-            COUNTER=$((COUNTER + 1))
-          done <<< "$RU_PROXIES"
-          MESSAGE="${MESSAGE}\n"
-        fi
+            
+            # Экранируем для JSON (только кавычки, НЕ экранируем & и =)
+            proxy_url_json=$(echo "$proxy_url" | sed 's/"/\\"/g')
+            
+            keyboard="${keyboard}[{\"text\":\"${EMOJI} ${PERCENT}% 👉 ${title} ${counter}\",\"url\":\"${proxy_url_json}\"}],"
+            counter=$((counter + 1))
+          done <<< "$proxies"
+          
+          # Убираем последнюю запятую и закрываем JSON
+          keyboard="${keyboard%,}]}"
+          
+          # Отправляем
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="${message}" \
+            -d parse_mode="HTML" \
+            -d reply_markup="${keyboard}"
+          
+          sleep 1
+        }
         
-        # Добавляем EU
-        if [ -n "$EU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇪🇺 <b>Европа</b>\n"
-          COUNTER=1
-          while IFS= read -r line; do
-            PERCENT=$((RANDOM % 100))
-            if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
-            if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
-            COUNTER=$((COUNTER + 1))
-          done <<< "$EU_PROXIES"
-          MESSAGE="${MESSAGE}\n"
-        fi
-        
-        # Добавляем ALL
-        if [ -n "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🌍 <b>Все прокси</b>\n"
-          COUNTER=1
-          while IFS= read -r line; do
-            PERCENT=$((RANDOM % 100))
-            if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
-            if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
-            COUNTER=$((COUNTER + 1))
-          done <<< "$ALL_PROXIES"
-        fi
-        
-        # Если нет прокси
-        if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}⚠️ Прокси временно отсутствуют\n"
-          MESSAGE="${MESSAGE}Следующее обновление через 4 часа"
-        fi
-        
-        # Отправляем сообщение
-        curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-          -d chat_id="${TG_CHAT}" \
-          -d text="${MESSAGE}" \
-          -d parse_mode="HTML" \
-          --max-time 30
+        # Отправляем каждую категорию
+        send_category "$RU_PROXIES" "Россия" "🇷🇺"
+        send_category "$EU_PROXIES" "Европа" "🇪🇺"
+        send_category "$ALL_PROXIES" "Все прокси" "🌍"
