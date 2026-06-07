@@ -26,68 +26,66 @@ jobs:
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём прокси (полные ссылки)
-        RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5)
-        EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5)
-        ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5)
+        # Берём прокси (правильно извлекаем полные ссылки и экранируем спецсимволы)
+        RU_PROXIES=$(grep -E 'tg://proxy' proxy_ru.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
+        EU_PROXIES=$(grep -E 'tg://proxy' proxy_eu.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
+        ALL_PROXIES=$(grep -E 'tg://proxy' proxy_all.txt 2>/dev/null | head -n 5 | sed 's/&/%26/g' | sed 's/=/%3D/g' | sed 's/?/%3F/g')
         
         # Начинаем сообщение
-        MESSAGE="⚡️ *Актуальные прокси MTProto*%0A"
-        MESSAGE="${MESSAGE}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК%0A"
-        MESSAGE="${MESSAGE}Просьба подключаться с учётом загрузки серверов.%0A%0A"
+        MESSAGE="⚡️ <b>Актуальные прокси MTProto</b>\n"
+        MESSAGE="${MESSAGE}📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n"
+        MESSAGE="${MESSAGE}Просьба подключаться с учётом загрузки серверов.\n\n"
         
         # Добавляем РФ
         if [ -n "$RU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇷🇺 *Россия*%0A"
+          MESSAGE="${MESSAGE}🇷🇺 <b>Россия</b>\n"
           COUNTER=1
           while IFS= read -r line; do
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$RU_PROXIES"
-          MESSAGE="${MESSAGE}%0A"
+          MESSAGE="${MESSAGE}\n"
         fi
         
         # Добавляем EU
         if [ -n "$EU_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🇪🇺 *Европа*%0A"
+          MESSAGE="${MESSAGE}🇪🇺 <b>Европа</b>\n"
           COUNTER=1
           while IFS= read -r line; do
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$EU_PROXIES"
-          MESSAGE="${MESSAGE}%0A"
+          MESSAGE="${MESSAGE}\n"
         fi
         
         # Добавляем ALL
         if [ -n "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}🌍 *Все прокси*%0A"
+          MESSAGE="${MESSAGE}🌍 <b>Все прокси</b>\n"
           COUNTER=1
           while IFS= read -r line; do
             PERCENT=$((RANDOM % 100))
             if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
             if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
-            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 ${line}%0A"
+            MESSAGE="${MESSAGE}${EMOJI} ${PERCENT}% 👉 <code>${line}</code>\n"
             COUNTER=$((COUNTER + 1))
           done <<< "$ALL_PROXIES"
         fi
         
         # Если нет прокси
         if [ -z "$RU_PROXIES" ] && [ -z "$EU_PROXIES" ] && [ -z "$ALL_PROXIES" ]; then
-          MESSAGE="${MESSAGE}⚠️ Прокси временно отсутствуют%0A"
+          MESSAGE="${MESSAGE}⚠️ Прокси временно отсутствуют\n"
           MESSAGE="${MESSAGE}Следующее обновление через 4 часа"
         fi
         
-        # Отправляем
+        # Отправляем сообщение
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
           -d text="${MESSAGE}" \
-          -d parse_mode="Markdown" \
+          -d parse_mode="HTML" \
           --max-time 30
-        
-        echo "Сообщение отправлено!"
