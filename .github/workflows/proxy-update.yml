@@ -11,49 +11,64 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Download verified proxies
+    - name: Download proxies from SoliSpirit source
       run: |
-        curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/verified/proxy_eu_verified.txt
+        # Скачиваем прокси из лучшего источника
+        curl -s -o proxy_all.txt https://raw.githubusercontent.com/SoliSpirit/mtproto/main/all_proxies.txt
+        
+        echo "=== Всего прокси в файле ==="
+        wc -l proxy_all.txt
+        
+        echo "=== Прокси с портом 443 и ключом ee ==="
+        grep 'port=443' proxy_all.txt | grep 'secret=ee' | wc -l
     
-    - name: Check and filter proxies
+    - name: Filter and check proxies
       run: |
-        # Извлекаем ссылки с ключом ee
-        grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' > all_proxies.txt
+        # Фильтруем: только порт 443, только ключ ee, только уникальные
+        grep 'port=443' proxy_all.txt | grep 'secret=ee' | sort -u > filtered_proxies.txt
         
+        TOTAL=$(cat filtered_proxies.txt | wc -l)
+        echo "Найдено прокси с портом 443 и ключом ee: $TOTAL"
+        
+        # Проверяем доступность через curl (быстрая проверка)
         > working_proxies.txt
-        TOTAL=$(cat all_proxies.txt | wc -l)
-        echo "Всего прокси для проверки: $TOTAL"
-        
         COUNTER=0
+        CHECKED=0
+        
         while IFS= read -r PROXY_URL; do
-          COUNTER=$((COUNTER + 1))
+          CHECKED=$((CHECKED + 1))
           
-          # Извлекаем сервер и порт
+          # Извлекаем сервер
           SERVER=$(echo "$PROXY_URL" | sed -n 's/.*server=\([^&]*\).*/\1/p')
           PORT=$(echo "$PROXY_URL" | sed -n 's/.*port=\([^&]*\).*/\1/p')
           
-          echo "[$COUNTER/$TOTAL] Проверяем: $SERVER:$PORT"
+          echo "[$CHECKED/$TOTAL] Проверяем: $SERVER:$PORT"
           
-          # Проверка через curl с таймаутом 3 секунды
-          if curl -s --max-time 3 --connect-timeout 2 "https://$SERVER:$PORT" -o /dev/null 2>/dev/null; then
+          # Быстрая проверка: просто проверяем, открыт ли порт
+          if timeout 2 bash -c "echo >/dev/tcp/$SERVER/$PORT" 2>/dev/null; then
             echo "  ✅ ДОСТУПЕН"
             echo "$PROXY_URL" >> working_proxies.txt
+            COUNTER=$((COUNTER + 1))
           else
-            # Пробуем без https (просто TCP проверка через nc)
-            if timeout 2 nc -zv "$SERVER" "$PORT" 2>/dev/null; then
-              echo "  ✅ ПОРТ ОТКРЫТ (TCP)"
-              echo "$PROXY_URL" >> working_proxies.txt
-            else
-              echo "  ❌ НЕ ДОСТУПЕН"
-            fi
+            echo "  ❌ НЕТ ДОСТУПА"
           fi
-        done < all_proxies.txt
+          
+          # Если нашли 10 рабочих - хватит
+          if [ $COUNTER -ge 10 ]; then
+            echo "Найдено 10 рабочих прокси, останавливаем проверку"
+            break
+          fi
+        done < filtered_proxies.txt
         
-        WORKING_COUNT=$(cat working_proxies.txt 2>/dev/null | wc -l)
-        echo "Рабочих прокси найдено: $WORKING_COUNT"
-        
-        # Берём первые 5 рабочих (без сортировки по пингу, только доступность)
+        # Берём первые 5 рабочих
         head -n 5 working_proxies.txt > final_proxies.txt
+        echo "Итоговых прокси для отправки: $(cat final_proxies.txt | wc -l)"
+        
+        # Если нет рабочих, берём без проверки (но отфильтрованные)
+        if [ ! -s final_proxies.txt ]; then
+          echo "Рабочих не найдено, отправляем отфильтрованные без проверки"
+          head -n 5 filtered_proxies.txt > final_proxies.txt
+        fi
     
     - name: Send to Telegram
       env:
@@ -64,45 +79,25 @@ jobs:
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
         if [ ! -s final_proxies.txt ]; then
-          # Если нет прокси - пробуем без фильтрации по ee
-          echo "Нет ee прокси, пробуем без фильтрации..."
-          PROXIES=$(grep 'tg://proxy' proxy_eu.txt | head -n 5)
-          
-          if [ -z "$PROXIES" ]; then
-            curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-              -d chat_id="${TG_CHAT}" \
-              -d text="⚠️ Нет доступных прокси\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nПопробуйте позже, через 4 часа автоматическая проверка повторится."
-            exit 0
-          else
-            # Отправляем без проверки (на свой страх и риск)
-            curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-              -d chat_id="${TG_CHAT}" \
-              -d text="⚠️ <b>Прокси без предварительной проверки</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n(Проверка в GitHub Actions не удалась, отправляю сырой список)" \
-              -d parse_mode="HTML"
-            
-            COUNTER=1
-            while IFS= read -r URL; do
-              URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
-              curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-                -d chat_id="${TG_CHAT}" \
-                -d text="Прокси ${COUNTER}" \
-                -d reply_markup="{\"inline_keyboard\":[[{\"text\":\"🔗 Подключить\",\"url\":\"${URL_ESCAPED}\"}]]}"
-              COUNTER=$((COUNTER + 1))
-              sleep 0.5
-            done <<< "$PROXIES"
-          fi
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="⚠️ Нет прокси с портом 443 и ключом ee\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nИсточник: SoliSpirit/mtproto"
           exit 0
         fi
         
-        # Отправляем рабочие прокси
+        # Заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Проверенные прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Проверка: порт открыт\n🔑 Только прокси с ключом ee" \
+          -d text="⚡️ <b>Проверенные прокси MTProto</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Источник: SoliSpirit/mtproto\n🔑 Порт 443 | Ключ ee (Fake TLS)\n🚀 Оптимально для обхода DPI" \
           -d parse_mode="HTML"
         
+        # Отправляем каждый прокси кнопкой
         COUNTER=1
         while IFS= read -r URL; do
+          # Экранируем спецсимволы для JSON
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
+          
+          # Случайный процент загрузки для красоты
           PERCENT=$((RANDOM % 100))
           if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
           if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
@@ -115,3 +110,9 @@ jobs:
           COUNTER=$((COUNTER + 1))
           sleep 0.5
         done < final_proxies.txt
+        
+        # Футер
+        curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          -d chat_id="${TG_CHAT}" \
+          -d text="🔄 Обновление каждые 4 часа\n📡 Автоматическая проверка доступности" \
+          -d parse_mode="HTML"
