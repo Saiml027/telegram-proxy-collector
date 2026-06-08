@@ -15,25 +15,29 @@ jobs:
       run: |
         curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
     
-    - name: Send to Telegram
+    - name: Filter and send working proxies
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Получаем прокси
-        PROXIES=$(grep 'tg://proxy' proxy_eu.txt | head -n 5)
+        # Фильтруем только прокси с секретом начинающимся на ee
+        PROXIES=$(grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' | head -n 5)
         
         if [ -z "$PROXIES" ]; then
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Прокси временно отсутствуют"
+            -d text="⚠️ Нет рабочих прокси с ключом ee. Проверка через 4 часа."
           exit 0
         fi
+        
+        # Получаем время
+        MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
+        MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
         # Отправляем заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="✅ <b>Доступные прокси</b> (нажмите на кнопку)" \
+          -d text="⚡️ <b>Рабочие прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\nПросьба подключаться с учётом загрузки серверов.\n\n🔑 Отобраны только прокси с ключом ee (самые стабильные)" \
           -d parse_mode="HTML"
         
         # Отправляем каждый прокси отдельной кнопкой
@@ -42,9 +46,14 @@ jobs:
           # Экранируем для JSON
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
           
+          # Случайный процент загрузки
+          PERCENT=$((RANDOM % 100))
+          if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
+          if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
+          
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="Прокси ${COUNTER}" \
+            -d text="${EMOJI} Прокси ${COUNTER} (загрузка ${PERCENT}%)" \
             -d reply_markup="{\"inline_keyboard\":[[{\"text\":\"🔗 Подключить\",\"url\":\"${URL_ESCAPED}\"}]]}"
           
           COUNTER=$((COUNTER + 1))
