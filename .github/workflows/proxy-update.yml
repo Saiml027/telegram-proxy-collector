@@ -20,27 +20,33 @@ jobs:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Берём первые 5 прокси
+        # Получаем прокси
         PROXIES=$(grep 'tg://proxy' proxy_eu.txt | head -n 5)
         
         if [ -z "$PROXIES" ]; then
-          echo "Прокси не найдены"
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="⚠️ Прокси временно отсутствуют"
           exit 0
         fi
         
-        # Формируем кнопки
-        KEYBOARD='{"inline_keyboard":['
-        COUNTER=1
-        
-        while IFS= read -r URL; do
-          KEYBOARD="${KEYBOARD}[{\"text\":\"Прокси ${COUNTER}\",\"url\":\"${URL}\"}],"
-          COUNTER=$((COUNTER + 1))
-        done <<< "$PROXIES"
-        
-        KEYBOARD="${KEYBOARD%,}]}"
-        
-        # Отправляем
-        curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+        # Отправляем заголовок
+        curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="✅ Доступные прокси (нажмите на кнопку)" \
-          -d reply_markup="${KEYBOARD}"
+          -d text="✅ <b>Доступные прокси</b> (нажмите на кнопку)" \
+          -d parse_mode="HTML"
+        
+        # Отправляем каждый прокси отдельной кнопкой
+        COUNTER=1
+        while IFS= read -r URL; do
+          # Экранируем для JSON
+          URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
+          
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="Прокси ${COUNTER}" \
+            -d reply_markup="{\"inline_keyboard\":[[{\"text\":\"🔗 Подключить\",\"url\":\"${URL_ESCAPED}\"}]]}"
+          
+          COUNTER=$((COUNTER + 1))
+          sleep 0.5
+        done <<< "$PROXIES"
