@@ -11,51 +11,107 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Download verified proxies
+    - name: Download proxies
       run: |
         curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt
     
-    - name: Filter and send working proxies
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install proxy checker
+      run: |
+        git clone https://github.com/AmirTahaMim/telegram-mtproto-proxy-checker.git
+        cd telegram-mtproto-proxy-checker
+        npm install
+    
+    - name: Check proxies and send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Фильтруем только прокси с секретом начинающимся на ee
-        PROXIES=$(grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' | head -n 5)
-        
-        if [ -z "$PROXIES" ]; then
-          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-            -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Нет рабочих прокси с ключом ee. Проверка через 4 часа."
-          exit 0
-        fi
+        cd telegram-mtproto-proxy-checker
         
         # Получаем время
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
+        # Берём прокси с ключом ee (первые 15 для проверки)
+        PROXIES=$(grep 'tg://proxy' ../proxy_eu.txt | grep 'secret=ee' | head -n 15)
+        
+        if [ -z "$PROXIES" ]; then
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="⚠️ Нет прокси с ключом ee для проверки"
+          exit 0
+        fi
+        
         # Отправляем заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Рабочие прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\nПросьба подключаться с учётом загрузки серверов.\n\n🔑 Отобраны только прокси с ключом ee (самые стабильные)" \
+          -d text="🔄 Начинаю проверку прокси...\n\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\nВсего найдено: $(echo "$PROXIES" | wc -l) шт." \
           -d parse_mode="HTML"
         
-        # Отправляем каждый прокси отдельной кнопкой
-        COUNTER=1
-        while IFS= read -r URL; do
-          # Экранируем для JSON
-          URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
+        WORKING_PROXIES=""
+        CHECKED=0
+        WORKING=0
+        
+        while IFS= read -r PROXY_URL; do
+          CHECKED=$((CHECKED + 1))
+          echo "Проверяем [$CHECKED]: $PROXY_URL"
           
-          # Случайный процент загрузки
-          PERCENT=$((RANDOM % 100))
-          if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
-          if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
+          # Запускаем проверку с таймаутом 10 секунд
+          RESULT=$(timeout 10 node index.js "$PROXY_URL" 2>&1)
+          EXIT_CODE=$?
           
+          if [ $EXIT_CODE -eq 0 ] && echo "$RESULT" | grep -qi "OK\|true\|working"; then
+            echo "✅ РАБОТАЕТ"
+            WORKING=$((WORKING + 1))
+            WORKING_PROXIES="${WORKING_PROXIES}${PROXY_URL}\n"
+          else
+            echo "❌ НЕ РАБОТАЕТ: $RESULT"
+          fi
+          
+          # Отправляем промежуточный статус каждые 3 проверки
+          if [ $((CHECKED % 3)) -eq 0 ]; then
+            curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+              -d chat_id="${TG_CHAT}" \
+              -d text="🔄 Проверено: ${CHECKED} / найдено рабочих: ${WORKING}" \
+              -d parse_mode="HTML"
+          fi
+          
+          sleep 1
+        done <<< "$PROXIES"
+        
+        # Отправляем результат
+        if [ -n "$WORKING_PROXIES" ]; then
+          # Отправляем каждый рабочий прокси отдельной кнопкой
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="${EMOJI} Прокси ${COUNTER} (загрузка ${PERCENT}%)" \
-            -d reply_markup="{\"inline_keyboard\":[[{\"text\":\"🔗 Подключить\",\"url\":\"${URL_ESCAPED}\"}]]}"
+            -d text="✅ <b>Найдено рабочих прокси: ${WORKING} из ${CHECKED}</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК" \
+            -d parse_mode="HTML"
           
-          COUNTER=$((COUNTER + 1))
-          sleep 0.5
-        done <<< "$PROXIES"
+          COUNTER=1
+          while IFS= read -r URL; do
+            URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
+            
+            # Случайный процент загрузки
+            PERCENT=$((RANDOM % 100))
+            if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
+            if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
+            
+            curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+              -d chat_id="${TG_CHAT}" \
+              -d text="${EMOJI} Прокси ${COUNTER} (загрузка ${PERCENT}%)" \
+              -d reply_markup="{\"inline_keyboard\":[[{\"text\":\"🔗 Подключить\",\"url\":\"${URL_ESCAPED}\"}]]}"
+            
+            COUNTER=$((COUNTER + 1))
+            sleep 0.5
+          done <<< "$WORKING_PROXIES"
+        else
+          curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="❌ <b>Рабочих прокси не найдено</b>\nПроверено: ${CHECKED} шт.\nСледующая попытка через 4 часа." \
+            -d parse_mode="HTML"
+        fi
