@@ -10,30 +10,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
     
-    - name: Download verified proxies
+    # Ключевой момент: Устанавливаем ВСЕ нужные библиотеки, включая socks
+    - name: Install dependencies
       run: |
-        # Скачиваем ТОЛЬКО проверенные прокси из папки verified
-        curl -s -o proxy_ru.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/verified/proxy_ru_verified.txt
-        curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/verified/proxy_eu_verified.txt
-        curl -s -o proxy_all.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/verified/proxy_all_verified.txt
-        
-        echo "=== РАЗМЕРЫ ФАЙЛОВ ==="
-        wc -l proxy_*.txt
+        pip install --upgrade pip
+        pip install requests telethon python-socks[asyncio]
     
+    # Запускаем скрипт в режиме ПОЛНОЙ проверки с вашими ключами
+    - name: Run full collector & checker
+      run: python main.py --top 200
+      env:
+        MTPROXY_API_ID: ${{ secrets.MTPROXY_API_ID }}
+        MTPROXY_API_HASH: ${{ secrets.MTPROXY_API_HASH }}
+    
+    # Копируем проверенные файлы (именно их, а не сырые)
+    - name: Copy verified proxies
+      run: |
+        cp verified/proxy_ru_verified.txt proxy_ru.txt
+        cp verified/proxy_eu_verified.txt proxy_eu.txt
+        cp verified/proxy_all_verified.txt proxy_all.txt
+        cp verified/socks5_proxies.txt socks5.txt || true
+    
+    # Отправляем результат в Telegram (как в прошлом рабочем примере)
     - name: Send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Получаем время
+        # Получаем время по МСК
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём проверенные прокси с ключом ee
+        # Берём ПРОВЕРЕННЫЕ прокси с ключом ee из отфильтрованного списка
+        # Прокси в verified-файлах уже отсортированы по приоритету: сначала probe_resistant, потом по пингу
         PROXIES=$(grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' | head -n 5)
         
-        # Если нет ee прокси, берём любые из проверенных
+        # Резерв: если нет ee, берём любые из проверенных
         if [ -z "$PROXIES" ]; then
           PROXIES=$(grep 'tg://proxy' proxy_eu.txt | head -n 5)
         fi
@@ -41,23 +57,21 @@ jobs:
         if [ -z "$PROXIES" ]; then
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Нет проверенных прокси. Попробуйте позже."
+            -d text="⚠️ Нет проверенных прокси. Возможно, проблема с API_ID/API_HASH."
           exit 0
         fi
         
-        # Отправляем заголовок
+        # Заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Проверенные прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Прокси отобраны автоматически (пинг &lt; 1 сек)\n🔑 С ключом ee - наиболее стабильные" \
+          -d text="⚡️ <b>Проверенные прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Прокси прошли реальную проверку подключением к Telegram\n🔑 Отобраны стабильные и устойчивые к DPI" \
           -d parse_mode="HTML"
         
-        # Отправляем каждый прокси кнопкой
+        # Отправляем кнопками
         COUNTER=1
         while IFS= read -r URL; do
-          # Экранируем & для JSON
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
           
-          # Случайный процент загрузки
           PERCENT=$((RANDOM % 100))
           if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
           if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
