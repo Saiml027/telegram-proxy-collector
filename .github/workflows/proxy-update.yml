@@ -10,68 +10,75 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
     
-    # Ключевой момент: Устанавливаем ВСЕ нужные библиотеки, включая socks
-    - name: Install dependencies
+    - name: Download verified proxies
       run: |
-        pip install --upgrade pip
-        pip install requests telethon python-socks[asyncio]
+        curl -s -o proxy_eu.txt https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/verified/proxy_eu_verified.txt
     
-    # Запускаем скрипт в режиме ПОЛНОЙ проверки с вашими ключами
-    - name: Run full collector & checker
-      run: python main.py --top 200
-      env:
-        MTPROXY_API_ID: ${{ secrets.MTPROXY_API_ID }}
-        MTPROXY_API_HASH: ${{ secrets.MTPROXY_API_HASH }}
-    
-    # Копируем проверенные файлы (именно их, а не сырые)
-    - name: Copy verified proxies
+    - name: Check and filter proxies
       run: |
-        cp verified/proxy_ru_verified.txt proxy_ru.txt
-        cp verified/proxy_eu_verified.txt proxy_eu.txt
-        cp verified/proxy_all_verified.txt proxy_all.txt
-        cp verified/socks5_proxies.txt socks5.txt || true
+        # Извлекаем полные ссылки
+        grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' > all_proxies.txt
+        
+        # Файл для рабочих прокси
+        > working_proxies.txt
+        
+        while IFS= read -r PROXY_URL; do
+          # Извлекаем сервер и порт из ссылки
+          SERVER=$(echo "$PROXY_URL" | sed -n 's/.*server=\([^&]*\).*/\1/p')
+          PORT=$(echo "$PROXY_URL" | sed -n 's/.*port=\([^&]*\).*/\1/p')
+          
+          echo "Проверяем: $SERVER:$PORT"
+          
+          # Проверяем доступность порта (таймаут 2 секунды)
+          if timeout 2 bash -c "echo >/dev/tcp/$SERVER/$PORT" 2>/dev/null; then
+            # Измеряем пинг
+            PING=$(ping -c 1 -W 2 "$SERVER" 2>/dev/null | grep 'time=' | sed -n 's/.*time=\([0-9.]*\).*/\1/p')
+            if [ -n "$PING" ] && [ $(echo "$PING < 300" | bc) -eq 1 ]; then
+              echo "✅ РАБОТАЕТ (пинг: ${PING}ms)"
+              echo "$PROXY_URL|$PING" >> working_proxies.txt
+            else
+              echo "⚠️ Порт открыт, но пинг >300ms или не измерен"
+            fi
+          else
+            echo "❌ НЕ ДОСТУПЕН"
+          fi
+        done < all_proxies.txt
+        
+        # Сортируем по пингу и берём топ-5
+        if [ -s working_proxies.txt ]; then
+          sort -t'|' -k2 -n working_proxies.txt | head -n 5 | cut -d'|' -f1 > final_proxies.txt
+          echo "Найдено рабочих прокси: $(cat final_proxies.txt | wc -l)"
+        else
+          echo "Рабочих прокси не найдено"
+          touch final_proxies.txt
+        fi
     
-    # Отправляем результат в Telegram (как в прошлом рабочем примере)
     - name: Send to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
       run: |
-        # Получаем время по МСК
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        # Берём ПРОВЕРЕННЫЕ прокси с ключом ee из отфильтрованного списка
-        # Прокси в verified-файлах уже отсортированы по приоритету: сначала probe_resistant, потом по пингу
-        PROXIES=$(grep 'tg://proxy' proxy_eu.txt | grep 'secret=ee' | head -n 5)
-        
-        # Резерв: если нет ee, берём любые из проверенных
-        if [ -z "$PROXIES" ]; then
-          PROXIES=$(grep 'tg://proxy' proxy_eu.txt | head -n 5)
-        fi
-        
-        if [ -z "$PROXIES" ]; then
+        if [ ! -s final_proxies.txt ]; then
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Нет проверенных прокси. Возможно, проблема с API_ID/API_HASH."
+            -d text="⚠️ Нет доступных прокси с пингом <300ms\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК"
           exit 0
         fi
         
         # Заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Проверенные прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Прокси прошли реальную проверку подключением к Telegram\n🔑 Отобраны стабильные и устойчивые к DPI" \
+          -d text="⚡️ <b>Проверенные прокси MTProto (EU)</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Проверка: порт открыт, пинг &lt; 300ms\n🔑 Только прокси с ключом ee" \
           -d parse_mode="HTML"
         
         # Отправляем кнопками
         COUNTER=1
         while IFS= read -r URL; do
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
-          
           PERCENT=$((RANDOM % 100))
           if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
           if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
@@ -83,4 +90,4 @@ jobs:
           
           COUNTER=$((COUNTER + 1))
           sleep 0.5
-        done <<< "$PROXIES"
+        done < final_proxies.txt
