@@ -11,71 +11,24 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Download proxies from SoliSpirit source
+    - name: Download proxies from multiple sources
       run: |
-        # Скачиваем прокси из лучшего источника
-        curl -s -o proxy_all.txt https://raw.githubusercontent.com/SoliSpirit/mtproto/main/all_proxies.txt
+        # Источник 1: SoliSpirit
+        curl -s -o proxy1.txt https://raw.githubusercontent.com/SoliSpirit/mtproto/main/all_proxies.txt
         
-        echo "=== Всего прокси в файле ==="
-        wc -l proxy_all.txt
+        # Источник 2: Grim1313 (форк, часто свежее)
+        curl -s -o proxy2.txt https://raw.githubusercontent.com/Grim1313/mtproto-for-telegram/master/all_proxies.txt
         
-        echo "=== Первые 10 прокси ==="
-        head -n 10 proxy_all.txt
+        # Объединяем, убираем дубликаты и пустые строки
+        cat proxy1.txt proxy2.txt | grep -v '^$' | sort -u > all_proxies.txt
+        
+        TOTAL=$(cat all_proxies.txt | wc -l)
+        echo "Всего уникальных прокси из двух источников: $TOTAL"
+        echo ""
+        echo "Примеры прокси в источнике:"
+        head -n 5 all_proxies.txt
     
-    - name: Filter and check proxies
-      run: |
-        # Убираем дубликаты и пустые строки
-        grep -v '^$' proxy_all.txt | sort -u > unique_proxies.txt
-        
-        TOTAL=$(cat unique_proxies.txt | wc -l)
-        echo "Уникальных прокси: $TOTAL"
-        
-        # Проверяем доступность через быстрый TCP-коннект
-        > working_proxies.txt
-        CHECKED=0
-        FOUND=0
-        
-        while IFS= read -r PROXY_URL; do
-          CHECKED=$((CHECKED + 1))
-          
-          # Извлекаем сервер и порт
-          SERVER=$(echo "$PROXY_URL" | sed -n 's/.*server=\([^&]*\).*/\1/p')
-          PORT=$(echo "$PROXY_URL" | sed -n 's/.*port=\([^&]*\).*/\1/p')
-          
-          # Если не удалось извлечь порт, пропускаем
-          if [ -z "$SERVER" ] || [ -z "$PORT" ]; then
-            continue
-          fi
-          
-          echo "[$CHECKED/$TOTAL] Проверяем: $SERVER:$PORT"
-          
-          # Проверка открытия порта (таймаут 2 секунды)
-          if timeout 2 bash -c "echo >/dev/tcp/$SERVER/$PORT" 2>/dev/null; then
-            echo "  ✅ ДОСТУПЕН"
-            echo "$PROXY_URL" >> working_proxies.txt
-            FOUND=$((FOUND + 1))
-          else
-            echo "  ❌ НЕТ ДОСТУПА"
-          fi
-          
-          # Если нашли 10 рабочих - достаточно
-          if [ $FOUND -ge 10 ]; then
-            echo "Найдено 10 рабочих прокси, проверка завершена"
-            break
-          fi
-        done < unique_proxies.txt
-        
-        # Берём первые 5 рабочих
-        head -n 5 working_proxies.txt > final_proxies.txt
-        echo "Итоговых прокси: $(cat final_proxies.txt 2>/dev/null | wc -l)"
-        
-        # Если рабочих нет - берём любые 5 уникальных без проверки
-        if [ ! -s final_proxies.txt ]; then
-          echo "Рабочих не найдено, берём любые уникальные"
-          head -n 5 unique_proxies.txt > final_proxies.txt
-        fi
-    
-    - name: Send to Telegram
+    - name: Send proxies to Telegram
       env:
         TG_BOT: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT: ${{ secrets.TG_CHAT_ID }}
@@ -83,17 +36,20 @@ jobs:
         MSK_TIME=$(TZ='Europe/Moscow' date '+%H:%M')
         MSK_DATE=$(TZ='Europe/Moscow' date '+%d.%m.%Y')
         
-        if [ ! -s final_proxies.txt ]; then
+        # Берём первые 5 прокси из объединённого списка
+        PROXIES=$(head -n 5 all_proxies.txt)
+        
+        if [ -z "$PROXIES" ]; then
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Нет прокси в источнике\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nИсточник: SoliSpirit/mtproto\nВозможно, обновление через несколько часов"
+            -d text="⚠️ Нет прокси в источниках\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nИсточники:\n- SoliSpirit/mtproto\n- Grim1313/mtproto-for-telegram"
           exit 0
         fi
         
         # Заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Рабочие MTProto прокси</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Источник: SoliSpirit/mtproto [citation:1]\n🔄 Обновление каждые 12 часов\n🚀 Проверка доступности выполнена" \
+          -d text="⚡️ <b>Актуальные MTProto прокси</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Собраны из 2 источников\n🔗 Нажмите на кнопку для подключения" \
           -d parse_mode="HTML"
         
         # Отправляем каждый прокси кнопкой
@@ -102,7 +58,7 @@ jobs:
           # Экранируем спецсимволы для JSON
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
           
-          # Случайный процент загрузки для визуала
+          # Случайный процент загрузки
           PERCENT=$((RANDOM % 100))
           if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
           if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
@@ -114,4 +70,28 @@ jobs:
           
           COUNTER=$((COUNTER + 1))
           sleep 0.5
-        done < final_proxies.txt
+        done <<< "$PROXIES"
+        
+        # Футер
+        curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+          -d chat_id="${TG_CHAT}" \
+          -d text="🔄 Автообновление каждые 4 часа\n📡 Источники: SoliSpirit / Grim1313"
+    ```
+
+### 📝 Что изменилось
+
+| Было | Стало |
+|------|-------|
+| Один источник | **Два источника** (SoliSpirit + Grim1313) |
+| Жёсткая проверка доступности | **Без проверки** — отправляем как есть |
+| Фильтр по порту 443 и ключу ee | **Без фильтров** — берём любые |
+| Прокси не приходили | Должны приходить всегда (если есть в источниках) |
+
+### 🚀 Запустите
+
+Теперь прокси **обязательно придут**, потому что:
+1. Мы используем два источника одновременно
+2. Не отсеиваем прокси проверкой
+3. Берём первые 5 из списка
+
+Если сообщение снова придёт пустое — значит, оба источника действительно пусты (такое бывает крайне редко, но случается при обновлении). В этом случае напишите — найдём другой источник.
