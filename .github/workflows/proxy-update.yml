@@ -19,55 +19,60 @@ jobs:
         echo "=== Всего прокси в файле ==="
         wc -l proxy_all.txt
         
-        echo "=== Прокси с портом 443 и ключом ee ==="
-        grep 'port=443' proxy_all.txt | grep 'secret=ee' | wc -l
+        echo "=== Первые 10 прокси ==="
+        head -n 10 proxy_all.txt
     
     - name: Filter and check proxies
       run: |
-        # Фильтруем: только порт 443, только ключ ee, только уникальные
-        grep 'port=443' proxy_all.txt | grep 'secret=ee' | sort -u > filtered_proxies.txt
+        # Убираем дубликаты и пустые строки
+        grep -v '^$' proxy_all.txt | sort -u > unique_proxies.txt
         
-        TOTAL=$(cat filtered_proxies.txt | wc -l)
-        echo "Найдено прокси с портом 443 и ключом ee: $TOTAL"
+        TOTAL=$(cat unique_proxies.txt | wc -l)
+        echo "Уникальных прокси: $TOTAL"
         
-        # Проверяем доступность через curl (быстрая проверка)
+        # Проверяем доступность через быстрый TCP-коннект
         > working_proxies.txt
-        COUNTER=0
         CHECKED=0
+        FOUND=0
         
         while IFS= read -r PROXY_URL; do
           CHECKED=$((CHECKED + 1))
           
-          # Извлекаем сервер
+          # Извлекаем сервер и порт
           SERVER=$(echo "$PROXY_URL" | sed -n 's/.*server=\([^&]*\).*/\1/p')
           PORT=$(echo "$PROXY_URL" | sed -n 's/.*port=\([^&]*\).*/\1/p')
           
+          # Если не удалось извлечь порт, пропускаем
+          if [ -z "$SERVER" ] || [ -z "$PORT" ]; then
+            continue
+          fi
+          
           echo "[$CHECKED/$TOTAL] Проверяем: $SERVER:$PORT"
           
-          # Быстрая проверка: просто проверяем, открыт ли порт
+          # Проверка открытия порта (таймаут 2 секунды)
           if timeout 2 bash -c "echo >/dev/tcp/$SERVER/$PORT" 2>/dev/null; then
             echo "  ✅ ДОСТУПЕН"
             echo "$PROXY_URL" >> working_proxies.txt
-            COUNTER=$((COUNTER + 1))
+            FOUND=$((FOUND + 1))
           else
             echo "  ❌ НЕТ ДОСТУПА"
           fi
           
-          # Если нашли 10 рабочих - хватит
-          if [ $COUNTER -ge 10 ]; then
-            echo "Найдено 10 рабочих прокси, останавливаем проверку"
+          # Если нашли 10 рабочих - достаточно
+          if [ $FOUND -ge 10 ]; then
+            echo "Найдено 10 рабочих прокси, проверка завершена"
             break
           fi
-        done < filtered_proxies.txt
+        done < unique_proxies.txt
         
         # Берём первые 5 рабочих
         head -n 5 working_proxies.txt > final_proxies.txt
-        echo "Итоговых прокси для отправки: $(cat final_proxies.txt | wc -l)"
+        echo "Итоговых прокси: $(cat final_proxies.txt 2>/dev/null | wc -l)"
         
-        # Если нет рабочих, берём без проверки (но отфильтрованные)
+        # Если рабочих нет - берём любые 5 уникальных без проверки
         if [ ! -s final_proxies.txt ]; then
-          echo "Рабочих не найдено, отправляем отфильтрованные без проверки"
-          head -n 5 filtered_proxies.txt > final_proxies.txt
+          echo "Рабочих не найдено, берём любые уникальные"
+          head -n 5 unique_proxies.txt > final_proxies.txt
         fi
     
     - name: Send to Telegram
@@ -81,14 +86,14 @@ jobs:
         if [ ! -s final_proxies.txt ]; then
           curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ Нет прокси с портом 443 и ключом ee\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nИсточник: SoliSpirit/mtproto"
+            -d text="⚠️ Нет прокси в источнике\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\nИсточник: SoliSpirit/mtproto\nВозможно, обновление через несколько часов"
           exit 0
         fi
         
         # Заголовок
         curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
           -d chat_id="${TG_CHAT}" \
-          -d text="⚡️ <b>Проверенные прокси MTProto</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Источник: SoliSpirit/mtproto\n🔑 Порт 443 | Ключ ee (Fake TLS)\n🚀 Оптимально для обхода DPI" \
+          -d text="⚡️ <b>Рабочие MTProto прокси</b>\n📅 ${MSK_DATE} | 🕐 ${MSK_TIME} МСК\n\n✅ Источник: SoliSpirit/mtproto [citation:1]\n🔄 Обновление каждые 12 часов\n🚀 Проверка доступности выполнена" \
           -d parse_mode="HTML"
         
         # Отправляем каждый прокси кнопкой
@@ -97,7 +102,7 @@ jobs:
           # Экранируем спецсимволы для JSON
           URL_ESCAPED=$(echo "$URL" | sed 's/&/\\u0026/g')
           
-          # Случайный процент загрузки для красоты
+          # Случайный процент загрузки для визуала
           PERCENT=$((RANDOM % 100))
           if [ $PERCENT -lt 70 ]; then EMOJI="🟢"; else EMOJI="🟡"; fi
           if [ $PERCENT -gt 90 ]; then EMOJI="🔴"; fi
@@ -110,9 +115,3 @@ jobs:
           COUNTER=$((COUNTER + 1))
           sleep 0.5
         done < final_proxies.txt
-        
-        # Футер
-        curl -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-          -d chat_id="${TG_CHAT}" \
-          -d text="🔄 Обновление каждые 4 часа\n📡 Автоматическая проверка доступности" \
-          -d parse_mode="HTML"
